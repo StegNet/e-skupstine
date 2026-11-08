@@ -57,7 +57,7 @@ async function certiliaPhoto(userId: string): Promise<Img | null> {
     .from(s.account)
     .where(and(eq(s.account.userId, userId), eq(s.account.providerId, "certilia")));
   if (!acc) return null;
-  const info = await certiliaClaims(acc, PHOTO_CLAIMS);
+  const info = certiliaClaims(acc.idToken);
   const claim = PHOTO_CLAIMS.find((c) => typeof info[c] === "string" && info[c]);
   const value = claim ? (info[claim] as string) : null;
   logger.debug("Certilia photo claim", { userId, claim: claim ?? "none", form: value ? (value.startsWith("https://") ? "url" : "inline") : null });

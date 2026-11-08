@@ -6,11 +6,10 @@ import { emailOTP } from "better-auth/plugins/email-otp";
 import { genericOAuth, okta, type GenericOAuthConfig } from "better-auth/plugins/generic-oauth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { refreshAvatar } from "./avatar";
-import { certiliaClaims } from "./certilia";
+import { certiliaClaims, certiliaOib } from "./certilia";
 import { db } from "./db";
 import * as schema from "./db/schema";
 import { sendMail } from "./mail";
-import { isValidOib } from "./members";
 import { getLogger } from "@logtape/logtape";
 
 const logger = getLogger(["e-skupstina", "auth"]);
@@ -20,12 +19,10 @@ export const MEMBER_PROVIDERS = ["certilia", "okta"];
 
 const providers: GenericOAuthConfig[] = [];
 
-/** Certilia returns the verified OIB as the "pin" claim (its discovery document lists "pin", the portal calls it "OIB/PIN").
- * shortcut: claim name not yet seen in a real login; if login fails with this error, log the profile and check. */
-function certiliaOib(profile: Record<string, unknown>) {
-  const oib = String(profile.pin ?? "");
-  // getUserInfo already refused such profiles; this guards the account subject and the user mapping.
-  if (!isValidOib(oib)) throw new APIError("UNAUTHORIZED", { message: "Certilia profile has no valid OIB" });
+/** getUserInfo already refused profiles without an OIB; this guards the account subject and the user mapping. */
+function requireOib(profile: Record<string, unknown>) {
+  const oib = certiliaOib(profile);
+  if (!oib) throw new APIError("UNAUTHORIZED", { message: "Certilia profile has no valid OIB" });
   return oib;
 }
 
@@ -39,28 +36,22 @@ if (certiliaDiscovery) {
     scopes: (process.env.CERTILIA_SCOPES ?? "openid profile email").split(/\s+/),
     requireIdTokenVerification: true,
     overrideUserInfo: true,
-    // Better Auth calls this after verifying the ID token. Its claims are used, plus userinfo's when it lacks the OIB
-    // (Better Auth would otherwise skip userinfo whenever the ID token has an email). `sub` is still checked against it.
+    // Better Auth calls this after verifying the ID token, which carries everything (Better Auth's default would call
+    // userinfo whenever the ID token has no email, and Certilia's userinfo answers 400).
     getUserInfo: async (tokens) => {
-      const info = await certiliaClaims(tokens, ["pin"]);
-      if (!info.sub || !isValidOib(String(info.pin ?? ""))) {
-        // Claim names only, never values: tells us which field the OIB is in if Certilia renames it.
-        const oibIn = Object.keys(info).filter((k) => isValidOib(String(info[k]))).join(",");
-        logger.warn("Certilia profile has no valid OIB", { claims: Object.keys(info).sort().join(","), hasPin: "pin" in info, oibIn });
-        // TEMPORARY, remove once Certilia sign-in works: the claim values, written straight to stdout so they never
-        // reach Sentry, the photo as its length only. Only failed sign-ins get here.
-        process.stdout.write(
-          `certilia claims ${JSON.stringify(info, (k, v) => (k === "thumbnail" && typeof v === "string" ? `<${v.length} chars>` : v))}\n`,
-        );
+      const info = certiliaClaims(tokens.idToken);
+      if (!certiliaOib(info)) {
+        // Claim names only, never values.
+        logger.warn("Certilia profile has no valid OIB", { claims: Object.keys(info).sort().join(",") });
         return null; // Better Auth then sends the member back to the sign-in page with an error, not a JSON reply.
       }
       return { ...info, emailVerified: info.email_verified === true || info.email_verified === "true" };
     },
     // The OIB becomes the account's subject (account.account_id). Better Auth writes it from the verified
     // provider response only; user-editable profile fields could not be trusted for voting rights.
-    accountSubject: ({ profile }) => certiliaOib(profile),
+    accountSubject: ({ profile }) => requireOib(profile),
     mapProfileToUser: (p) => {
-      const oib = certiliaOib(p);
+      const oib = requireOib(p);
       const name = p.name || [p.given_name, p.family_name].filter(Boolean).join(" ") || oib;
       // Certilia may not return an email; .invalid addresses are never mailed.
       return { name, email: p.email || `${oib}@certilia.invalid` };

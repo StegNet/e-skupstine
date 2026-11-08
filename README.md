@@ -63,8 +63,8 @@ CERTILIA_CLIENT_ID=dev
 CERTILIA_CLIENT_SECRET=dev
 ```
 
-"Prijava s Certilia" then goes to the mock server: type any user name and claims such as
-`{"pin":"11111111119","name":"Ana Horvat","email":"ana@example.hr"}`. Make that person admin:
+"Prijava s Certilia" then goes to the mock server: type an OIB such as `11111111119` as the user name (Certilia
+sends the OIB as `sub`) and claims such as `{"name":"Ana Horvat","email":"ana@example.hr"}`. Make that person admin:
 
 ```bash
 bun run make-admin 11111111119
@@ -121,9 +121,9 @@ Register the app at developer.certilia.com (free up to 100k logins/month), with 
 `$BETTER_AUTH_URL/api/auth/callback/certilia` and the grant type `authorization_code`. Request OIB/PIN, first and last
 name (mandatory), email and photo (optional). Set `CERTILIA_DISCOVERY_URL`
 (`https://idp.certilia.com/oauth2/oidcdiscovery/.well-known/openid-configuration`), client ID and secret.
-The app reads the profile from Certilia's userinfo endpoint and stores the OIB (claim `pin`) as the account's subject.
-⚠ The claim name comes from Certilia's discovery document and is not yet confirmed by a real login (`certiliaOib` in
-[src/lib/auth.ts](src/lib/auth.ts)). Without an email the user gets a placeholder `<oib>@certilia.invalid`, which is never mailed.
+The app reads the profile from the verified ID token, where Certilia sends the OIB as the subject (`sub`), and stores
+it as the account's subject ([src/lib/certilia.ts](src/lib/certilia.ts)). Certilia's userinfo endpoint is not used.
+Without an email the user gets a placeholder `<oib>@certilia.invalid`, which is never mailed.
 
 ### Sentry (optional)
 

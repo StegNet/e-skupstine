@@ -1,39 +1,16 @@
-import { afterEach, expect, mock, test } from "bun:test";
-import { certiliaClaims } from "./certilia";
+import { expect, test } from "bun:test";
+import { certiliaClaims, certiliaOib } from "./certilia";
 
 const jwt = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
-const realFetch = globalThis.fetch;
-process.env.CERTILIA_DISCOVERY_URL = "https://idp.test/.well-known/openid-configuration";
 
-// Certilia: discovery works; userinfo answers with `userinfo`.
-function certilia(userinfo: Response) {
-  const fetchMock = mock(async (url: string | URL | Request) =>
-    String(url).endsWith("openid-configuration")
-      ? Response.json({ userinfo_endpoint: "https://idp.test/userinfo" })
-      : userinfo,
-  );
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
-  return fetchMock;
-}
-afterEach(() => {
-  globalThis.fetch = realFetch;
+test("Certilia's ID token carries the OIB as sub", () => {
+  const claims = certiliaClaims(jwt({ sub: "11111111119", given_name: "Ana", family_name: "Horvat" }));
+  expect(claims.given_name).toBe("Ana");
+  expect(certiliaOib(claims)).toBe("11111111119");
 });
 
-test("uses the ID token alone when it has the wanted claim", async () => {
-  const fetchMock = certilia(new Response(null, { status: 500 }));
-  const claims = await certiliaClaims({ accessToken: "t", idToken: jwt({ sub: "s1", pin: "12345678903" }) }, ["pin"]);
-  expect(claims).toEqual({ sub: "s1", pin: "12345678903" });
-  expect(fetchMock).not.toHaveBeenCalled();
-});
-
-test("adds userinfo claims when the ID token lacks the wanted claim", async () => {
-  certilia(Response.json({ sub: "s1", pin: "12345678903" }));
-  const claims = await certiliaClaims({ accessToken: "t", idToken: jwt({ sub: "s1", name: "Ana" }) }, ["pin"]);
-  expect(claims).toEqual({ sub: "s1", name: "Ana", pin: "12345678903" });
-});
-
-test("keeps the ID token claims when userinfo fails", async () => {
-  certilia(new Response("<html>400 Bad Request</html>", { status: 400 }));
-  const claims = await certiliaClaims({ accessToken: "t", idToken: jwt({ sub: "s1" }) }, ["pin"]);
-  expect(claims).toEqual({ sub: "s1" });
+test("no OIB without a valid one in sub", () => {
+  expect(certiliaOib({ sub: "3b241101-e2bb-4255-8caf-4136c566a962", pin: "11111111119" })).toBeNull();
+  expect(certiliaOib({ sub: "11111111111" })).toBeNull(); // wrong check digit
+  expect(certiliaOib(certiliaClaims(null))).toBeNull();
 });
