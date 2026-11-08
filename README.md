@@ -107,6 +107,7 @@ with these variables:
 | `SMTP_URL`, `MAIL_FROM` | `smtp://smtp-relay.gmail.com:587?requireTLS=true` | |
 | `CERTILIA_DISCOVERY_URL`, `CERTILIA_CLIENT_ID`, `CERTILIA_CLIENT_SECRET` | | see Certilia below |
 | `OKTA_*` | | optional |
+| `CLIENT_IP_HEADER` | `cf-connecting-ip` | behind Cloudflare, so rate limits count per visitor; only if the server accepts traffic from Cloudflare alone |
 | `IMAGE`, `TAG` | `ghcr.io/stegnet/e-skupstine`, `0.1.0` | default `latest` |
 | `STATUT_CONFIG` | `eskupstina_statut` | configs are immutable: to change the rules, create `eskupstina_statut_2` and point this at it |
 | `GUEST_RETENTION_DAYS` | `90` | for the weekly purge (Mondays 03:00 Zagreb time) |

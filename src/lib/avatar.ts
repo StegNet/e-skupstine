@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { and, eq } from "drizzle-orm";
-import { certiliaUserInfo } from "./certilia";
+import { certiliaClaims } from "./certilia";
 import { db } from "./db";
 import * as s from "./db/schema";
 import { getLogger } from "@logtape/logtape";
@@ -53,13 +53,13 @@ async function download(url: string, headers?: HeadersInit): Promise<Img | null>
 
 async function certiliaPhoto(userId: string): Promise<Img | null> {
   const [acc] = await db
-    .select({ accessToken: s.account.accessToken })
+    .select({ accessToken: s.account.accessToken, idToken: s.account.idToken })
     .from(s.account)
     .where(and(eq(s.account.userId, userId), eq(s.account.providerId, "certilia")));
-  const r = await certiliaUserInfo(acc?.accessToken);
-  if (!r) return null;
-  const claim = PHOTO_CLAIMS.find((c) => typeof r.info[c] === "string" && r.info[c]);
-  const value = claim ? (r.info[claim] as string) : null;
+  if (!acc) return null;
+  const info = await certiliaClaims(acc, PHOTO_CLAIMS);
+  const claim = PHOTO_CLAIMS.find((c) => typeof info[c] === "string" && info[c]);
+  const value = claim ? (info[claim] as string) : null;
   logger.debug("Certilia photo claim", { userId, claim: claim ?? "none", form: value ? (value.startsWith("https://") ? "url" : "inline") : null });
   if (!value) return null;
   if (!value.startsWith("https://")) {
@@ -68,8 +68,8 @@ async function certiliaPhoto(userId: string): Promise<Img | null> {
     return img;
   }
   // The access token goes only to Certilia's own host, never to a URL elsewhere.
-  const sameHost = new URL(value).host === new URL(r.endpoint).host;
-  return download(value, sameHost ? { Authorization: `Bearer ${acc!.accessToken}` } : undefined);
+  const sameHost = new URL(value).host === new URL(process.env.CERTILIA_DISCOVERY_URL!).host;
+  return download(value, sameHost && acc.accessToken ? { Authorization: `Bearer ${acc.accessToken}` } : undefined);
 }
 
 /** Gravatar by SHA-256 of the email; d=404 means "no Gravatar" instead of a default picture. */

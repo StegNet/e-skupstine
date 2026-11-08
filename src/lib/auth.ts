@@ -6,7 +6,7 @@ import { emailOTP } from "better-auth/plugins/email-otp";
 import { genericOAuth, okta, type GenericOAuthConfig } from "better-auth/plugins/generic-oauth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { refreshAvatar } from "./avatar";
-import { certiliaUserInfo } from "./certilia";
+import { certiliaClaims } from "./certilia";
 import { db } from "./db";
 import * as schema from "./db/schema";
 import { sendMail } from "./mail";
@@ -42,12 +42,13 @@ if (certiliaDiscovery) {
     scopes: (process.env.CERTILIA_SCOPES ?? "openid profile email").split(/\s+/),
     requireIdTokenVerification: true,
     overrideUserInfo: true,
-    // Always read Certilia's userinfo endpoint. Better Auth would otherwise use only the ID token whenever it has an
-    // email, and the OIB may be released only through userinfo. Better Auth still checks `sub` against the ID token.
+    // Better Auth calls this after verifying the ID token. Its claims are used, plus userinfo's when it lacks the OIB
+    // (Better Auth would otherwise skip userinfo whenever the ID token has an email). `sub` is still checked against it.
     getUserInfo: async (tokens) => {
-      const r = await certiliaUserInfo(tokens.accessToken);
-      if (!r) logger.warn("Certilia userinfo unavailable");
-      return r && { ...r.info, emailVerified: r.info.email_verified === true || r.info.email_verified === "true" };
+      const info = await certiliaClaims(tokens, ["pin"]);
+      logger.debug("Certilia claims", { claims: Object.keys(info).sort().join(",") });
+      if (!info.sub) return null;
+      return { ...info, emailVerified: info.email_verified === true || info.email_verified === "true" };
     },
     // The OIB becomes the account's subject (account.account_id). Better Auth writes it from the verified
     // provider response only; user-editable profile fields could not be trusted for voting rights.
@@ -114,6 +115,15 @@ export const auth = betterAuth({
   session: { expiresIn: 60 * 60 * 12, updateAge: 60 * 60 },
   // Better Auth's own messages go through our logger; its extra arguments can hold tokens, so they are dropped.
   logger: { level: "debug", log: (level, message) => logger[level](`Better Auth: ${message}`) },
+  // Rate limits count per client IP; without one, everyone shares a counter (sign-in: 3 per 10 s for all members).
+  advanced: {
+    ipAddress: {
+      // Behind Cloudflare: CLIENT_IP_HEADER=cf-connecting-ip, if the server accepts traffic from Cloudflare only.
+      ipAddressHeaders: [process.env.CLIENT_IP_HEADER, "x-forwarded-for"].filter((h): h is string => !!h),
+      // X-Forwarded-For is read from the right, skipping the reverse proxies on private networks (Docker, Traefik).
+      trustedProxies: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "::1/128"],
+    },
+  },
   user: {
     additionalFields: {
       role: { type: "string", defaultValue: "user", input: false },

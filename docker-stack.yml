@@ -62,6 +62,7 @@ services:
       OKTA_CLIENT_ID: ${OKTA_CLIENT_ID:-}
       OKTA_CLIENT_SECRET: ${OKTA_CLIENT_SECRET:-}
       OKTA_ADMIN_GROUP: ${OKTA_ADMIN_GROUP:-}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
     configs:
       # The udruga's statute rules (see README "Statut"), mounted over the image's default.
       - source: statut
