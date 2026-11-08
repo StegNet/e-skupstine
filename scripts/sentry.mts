@@ -33,7 +33,9 @@ await configure({
 
 export const logger = getLogger(["e-skupstina", "scripts"]);
 
-export const errorMessage = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+/** Error text for logs, including the causes it wraps (Drizzle hides the Postgres error in `cause`). Never the stack. */
+export const errorMessage = (e: unknown): string =>
+  e instanceof Error ? `${e.name}: ${e.message}${e.cause ? ` <- ${errorMessage(e.cause)}` : ""}` : String(e);
 
 /** Sends everything queued to Sentry, then exits. */
 export async function exit(code = 0): Promise<never> {

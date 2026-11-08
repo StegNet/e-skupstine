@@ -24,7 +24,9 @@ services:
       secrets: [SENTRY_AUTH_TOKEN]
     env_file: .env
     environment:
-      DATABASE_URL: postgres://eskupstina:${POSTGRES_PASSWORD:-eskupstina}@db:5432/eskupstina
+      # The password goes separately: inside the URL, characters like % / ? # would be decoded or break it.
+      DATABASE_URL: postgres://eskupstina@db:5432/eskupstina
+      PGPASSWORD: ${POSTGRES_PASSWORD:-eskupstina}
     depends_on:
       db:
         condition: service_healthy

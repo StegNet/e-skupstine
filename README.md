@@ -81,35 +81,38 @@ docker compose exec app node scripts/make-admin.mts <OIB or email>   # after tha
 - The image runs on Node.js only; Bun is used during the build to install packages.
 - Put it behind your HTTPS reverse proxy; `BETTER_AUTH_URL` must be the public https URL.
 - Migrations run on every start. Back up the `pgdata` volume.
-- Guest data: run `docker compose exec app node scripts/purge-guests.mts 90` weekly (deletes guests whose sessions were sealed more than 90 days ago).
+- Guest data: run `docker compose exec app node scripts/purge-guests.mts 90` weekly (deletes guests whose sessions were sealed more than 90 days ago). The Swarm stack does this by itself.
 
-### Docker Swarm
+### Docker Swarm (with Traefik)
 
-[docker-stack.yml](docker-stack.yml) runs the published image with Postgres. Secrets are Swarm secrets (the image reads
-each `NAME_FILE` into `NAME`), and the statute file is a Swarm config.
+[docker-stack.yml](docker-stack.yml) runs Postgres (pinned to the manager, local volume), the app (behind Traefik,
+rolling start-first updates with automatic rollback) and a weekly guest purge. It expects Traefik's swarm provider on
+an external overlay network called `traefik`, with a default HTTPS entrypoint (the router only sets `Host()`).
+
+Create the statute config once, from your own `statut.json`:
 
 ```bash
-docker node update --label-add eskupstina.db=true <node>      # the database stays on this node (local volume)
-PW=$(openssl rand -hex 24)
-printf %s "$PW" | docker secret create eskupstina_postgres_password -
-printf %s "postgres://eskupstina:$PW@db:5432/eskupstina" | docker secret create eskupstina_database_url -
-openssl rand -base64 32 | tr -d '\n' | docker secret create eskupstina_better_auth_secret -
-printf %s 'smtps://user:pass@smtp.example.org:465' | docker secret create eskupstina_smtp_url -
-printf %s '<Certilia client secret>' | docker secret create eskupstina_certilia_client_secret -
-
-export IMAGE=ghcr.io/<owner>/<repo>:latest BETTER_AUTH_URL=https://glasanje.example.org \
-  MAIL_FROM='e-Skupština <noreply@example.org>' \
-  CERTILIA_DISCOVERY_URL=https://idp.certilia.com/oauth2/oidcdiscovery/.well-known/openid-configuration \
-  CERTILIA_CLIENT_ID=<client id>
-docker stack deploy --with-registry-auth -c docker-stack.yml eskupstina
+docker config create eskupstina_statut statut.json
 ```
 
-- Put your own `statut.json` next to the stack file. Configs are immutable, so after changing it deploy again with
-  `STATUT_REV=2` (then 3, …).
-- Admin and guest purge, on the node running the app:
-  `docker exec -it $(docker ps -q -f name=eskupstina_app) node scripts/make-admin.mts <OIB or email>` and, weekly from
-  cron (Mondays 03:00 matches the Sentry cron monitor), `… node scripts/purge-guests.mts 90`.
-- Updates roll out start-first and roll back if the new container fails its health check.
+Then deploy it as a Portainer stack or with `docker stack deploy --with-registry-auth -c docker-stack.yml eskupstina`,
+with these variables:
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `STACK_NAME` | `eskupstina` | Traefik router and service name |
+| `DOMAIN` | `glasanje.example.org` | public host; `BETTER_AUTH_URL` becomes `https://$DOMAIN` |
+| `DB_PASSWORD` | `openssl rand -hex 24` | any characters; set it before the first deploy (Postgres keeps the first one) |
+| `BETTER_AUTH_SECRET` | `openssl rand -base64 32` | |
+| `SMTP_URL`, `MAIL_FROM` | `smtp://smtp-relay.gmail.com:587?requireTLS=true` | |
+| `CERTILIA_DISCOVERY_URL`, `CERTILIA_CLIENT_ID`, `CERTILIA_CLIENT_SECRET` | | see Certilia below |
+| `OKTA_*` | | optional |
+| `IMAGE`, `TAG` | `ghcr.io/stegnet/e-skupstine`, `0.1.0` | default `latest` |
+| `STATUT_CONFIG` | `eskupstina_statut` | configs are immutable: to change the rules, create `eskupstina_statut_2` and point this at it |
+| `GUEST_RETENTION_DAYS` | `90` | for the weekly purge (Mondays 03:00 Zagreb time) |
+
+Make the first admin, on the node running the app:
+`docker exec -it $(docker ps -q -f name=eskupstina_app) node scripts/make-admin.mts <OIB or email>`.
 
 ### Certilia
 

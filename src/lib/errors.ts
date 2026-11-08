@@ -8,8 +8,9 @@ const logger = getLogger(["e-skupstina", "actions"]);
 /** An expected, user-facing failure. The message is a key under "errors" in messages/*.json. */
 export class UserError extends Error {}
 
-/** Error text for logs: the message only, never the stack or attached data. */
-export const errorMessage = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+/** Error text for logs, including the causes it wraps (Drizzle hides the Postgres error in `cause`). Never the stack. */
+export const errorMessage = (e: unknown): string =>
+  e instanceof Error ? `${e.name}: ${e.message}${e.cause ? ` <- ${errorMessage(e.cause)}` : ""}` : String(e);
 
 export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
 

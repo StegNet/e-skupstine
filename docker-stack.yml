@@ -1,109 +1,116 @@
-# Docker Swarm stack for e-Skupština. Set-up and the commands are in README "Docker Swarm"; in short:
-#   docker node update --label-add eskupstina.db=true <node that keeps the database>
-#   create the five secrets below (docker secret create …)
-#   BETTER_AUTH_URL=https://glasanje.example.org IMAGE=ghcr.io/<owner>/<repo>:latest \
-#     docker stack deploy --with-registry-auth -c docker-stack.yml eskupstina
-# Values in ${…} come from the shell that runs `docker stack deploy`.
+# e-Skupština on Docker Swarm behind Traefik (swarm provider on the external `traefik` overlay network,
+# websecure as the default entrypoint with TLS). Deploy as a Portainer stack, or:
+#   docker stack deploy --with-registry-auth -c docker-stack.yml eskupstina
+# Variables come from the Portainer stack environment (or the shell); see README "Docker Swarm".
+
+x-app: &app
+  image: ${IMAGE:-ghcr.io/stegnet/e-skupstine}:${TAG:-latest}
+  networks:
+    - internal
+
+# The database volume is local, so the database is pinned to the manager.
+# The app itself keeps no state on disk and may run on any node.
+x-deploy: &deploy
+  replicas: 1
+  restart_policy:
+    condition: any
+    delay: 5s
+
+x-deploy-pinned: &deploy-pinned
+  <<: *deploy
+  placement:
+    constraints:
+      - node.role == manager
 
 services:
   db:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: eskupstina
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: eskupstina
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-    secrets:
-      - postgres_password
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql/data
     networks:
-      - backend
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U eskupstina"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    deploy:
-      replicas: 1
-      placement:
-        # The data is in a local volume, so the database always runs on the same, labelled node.
-        constraints:
-          - node.labels.eskupstina.db == true
-      restart_policy:
-        condition: any
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy: *deploy-pinned
 
+  # Runs the database migrations on start, then serves on :3000.
+  # One replica: two tasks starting together would run the migrations at the same time.
   app:
-    image: ${IMAGE:-ghcr.io/your-org/e-skupstina:latest}
-    environment:
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?set BETTER_AUTH_URL to the public https URL}
-      MAIL_FROM: ${MAIL_FROM:-e-Skupština <noreply@example.org>}
+    <<: *app
+    environment: &app-env
+      BETTER_AUTH_URL: https://${DOMAIN}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      # The password goes separately: inside the URL, characters like % / ? # would be decoded or break it.
+      DATABASE_URL: postgres://eskupstina@db:5432/eskupstina
+      PGPASSWORD: ${DB_PASSWORD}
+      SMTP_URL: ${SMTP_URL}
+      MAIL_FROM: ${MAIL_FROM}
       CERTILIA_DISCOVERY_URL: ${CERTILIA_DISCOVERY_URL:-}
       CERTILIA_CLIENT_ID: ${CERTILIA_CLIENT_ID:-}
+      CERTILIA_CLIENT_SECRET: ${CERTILIA_CLIENT_SECRET:-}
       CERTILIA_SCOPES: ${CERTILIA_SCOPES:-openid profile email}
-      # Secrets arrive as files; scripts/docker-entrypoint.sh reads each NAME_FILE into NAME.
-      DATABASE_URL_FILE: /run/secrets/database_url
-      BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
-      SMTP_URL_FILE: /run/secrets/smtp_url
-      CERTILIA_CLIENT_SECRET_FILE: /run/secrets/certilia_client_secret
-      # Okta instead of (or besides) Certilia: add OKTA_ISSUER, OKTA_CLIENT_ID, OKTA_ADMIN_GROUP here and an
-      # okta_client_secret secret with OKTA_CLIENT_SECRET_FILE.
-    secrets:
-      - database_url
-      - better_auth_secret
-      - smtp_url
-      - certilia_client_secret
+      OKTA_ISSUER: ${OKTA_ISSUER:-}
+      OKTA_CLIENT_ID: ${OKTA_CLIENT_ID:-}
+      OKTA_CLIENT_SECRET: ${OKTA_CLIENT_SECRET:-}
+      OKTA_ADMIN_GROUP: ${OKTA_ADMIN_GROUP:-}
     configs:
-      # The udruga's statute rules, mounted over the image's default statut.json.
+      # The udruga's statute rules (see README "Statut"), mounted over the image's default.
       - source: statut
         target: /usr/src/app/statut.json
     networks:
-      - backend
-    ports:
-      # Put this behind your HTTPS reverse proxy, or drop the port and use the Traefik labels below.
-      - "3000:3000"
+      - internal
+      - traefik
     deploy:
-      # One replica: migrations run at start, and two instances starting together would race.
-      replicas: 1
+      <<: *deploy
+      # Start the new task before stopping the old one, roll back if it fails its health check.
       update_config:
         order: start-first
         failure_action: rollback
-      rollback_config:
-        order: start-first
-      restart_policy:
-        condition: any
-      # labels:
-      #   - traefik.enable=true
-      #   - traefik.http.routers.eskupstina.rule=Host(`glasanje.example.org`)
-      #   - traefik.http.routers.eskupstina.entrypoints=websecure
-      #   - traefik.http.routers.eskupstina.tls.certresolver=letsencrypt
-      #   - traefik.http.services.eskupstina.loadbalancer.server.port=3000
+        monitor: 30s
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.${STACK_NAME}.rule=Host(`${DOMAIN}`)
+        - traefik.http.services.${STACK_NAME}.loadbalancer.server.port=3000
+
+  # Deletes old guest accounts every Monday at 03:00 (Zagreb time), matching the Sentry cron monitor.
+  purge-guests:
+    <<: *app
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          sleep $$(( $$(date -d 'next monday 03:00' +%s) - $$(date +%s) ))
+          node scripts/purge-guests.mts ${GUEST_RETENTION_DAYS:-90} || true
+        done
+    environment:
+      <<: *app-env
+      TZ: Europe/Zagreb
+    # The image's health check probes the web server, which this service doesn't run.
+    healthcheck:
+      disable: true
+    stop_grace_period: 60s
+    deploy: *deploy
 
 networks:
-  backend:
+  internal:
     driver: overlay
+  traefik:
+    external: true
 
 volumes:
-  pgdata:
-
-secrets:
-  postgres_password:
-    external: true
-    name: eskupstina_postgres_password
-  database_url:
-    external: true
-    name: eskupstina_database_url
-  better_auth_secret:
-    external: true
-    name: eskupstina_better_auth_secret
-  smtp_url:
-    external: true
-    name: eskupstina_smtp_url
-  certilia_client_secret:
-    external: true
-    name: eskupstina_certilia_client_secret
+  db-data:
 
 configs:
   statut:
-    # Swarm configs can't change in place: after editing statut.json, deploy with STATUT_REV raised by one.
-    name: eskupstina_statut_${STATUT_REV:-1}
-    file: ./statut.json
+    # Configs are immutable: to change the rules, create a new config and point STATUT_CONFIG at it.
+    external: true
+    name: ${STATUT_CONFIG:-eskupstina_statut}
