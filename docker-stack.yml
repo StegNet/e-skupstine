@@ -27,7 +27,8 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: eskupstina
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      # Required variables use ${VAR:?…}: a missing one stops the deploy instead of becoming an empty value.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: eskupstina
     volumes:
       - db-data:/var/lib/postgresql/data
@@ -46,11 +47,11 @@ services:
   app:
     <<: *app
     environment: &app-env
-      BETTER_AUTH_URL: https://${DOMAIN}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: https://${DOMAIN:?set DOMAIN, e.g. glasanje.example.org}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
       # The password goes separately: inside the URL, characters like % / ? # would be decoded or break it.
       DATABASE_URL: postgres://eskupstina@db:5432/eskupstina
-      PGPASSWORD: ${DB_PASSWORD}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
       SMTP_URL: ${SMTP_URL}
       MAIL_FROM: ${MAIL_FROM}
       CERTILIA_DISCOVERY_URL: ${CERTILIA_DISCOVERY_URL:-}
@@ -77,8 +78,8 @@ services:
         monitor: 30s
       labels:
         - traefik.enable=true
-        - traefik.http.routers.${STACK_NAME}.rule=Host(`${DOMAIN}`)
-        - traefik.http.services.${STACK_NAME}.loadbalancer.server.port=3000
+        - traefik.http.routers.${STACK_NAME:-eskupstina}.rule=Host(`${DOMAIN}`)
+        - traefik.http.services.${STACK_NAME:-eskupstina}.loadbalancer.server.port=3000
 
   # Deletes old guest accounts every Monday at 03:00 (Zagreb time), matching the Sentry cron monitor.
   purge-guests:

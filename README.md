@@ -100,9 +100,9 @@ with these variables:
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `STACK_NAME` | `eskupstina` | Traefik router and service name |
+| `STACK_NAME` | `eskupstina` | Traefik router and service name (default `eskupstina`) |
 | `DOMAIN` | `glasanje.example.org` | public host; `BETTER_AUTH_URL` becomes `https://$DOMAIN` |
-| `DB_PASSWORD` | `openssl rand -hex 24` | any characters; set it before the first deploy (Postgres keeps the first one) |
+| `POSTGRES_PASSWORD` | `openssl rand -hex 24` | any characters; Postgres keeps the one it was first created with |
 | `BETTER_AUTH_SECRET` | `openssl rand -base64 32` | |
 | `SMTP_URL`, `MAIL_FROM` | `smtp://smtp-relay.gmail.com:587?requireTLS=true` | |
 | `CERTILIA_DISCOVERY_URL`, `CERTILIA_CLIENT_ID`, `CERTILIA_CLIENT_SECRET` | | see Certilia below |
