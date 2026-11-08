@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: eskupstina
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eskupstina}
+      POSTGRES_DB: eskupstina
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eskupstina"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+        SENTRY_ORG: ${SENTRY_ORG:-}
+        SENTRY_PROJECT: ${SENTRY_PROJECT:-}
+      secrets: [SENTRY_AUTH_TOKEN]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://eskupstina:${POSTGRES_PASSWORD:-eskupstina}@db:5432/eskupstina
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # The udruga's rules; edit and `docker compose restart app`.
+      - ./statut.json:/usr/src/app/statut.json:ro
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+
+secrets:
+  # Optional: set SENTRY_AUTH_TOKEN in .env to upload source maps during the build.
+  SENTRY_AUTH_TOKEN:
+    environment: SENTRY_AUTH_TOKEN

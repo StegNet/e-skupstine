@@ -1,0 +1,10 @@
+{
+  "name": "Udruga Primjer",
+  "noticeDays": 8,
+  "videoRequired": false,
+  "quorumPercent": 50,
+  "majority": { "base": "present", "fraction": "half" },
+  "secretBallotByDefault": false,
+  "memberCategories": {},
+  "minutesSigners": ["chair", "recorder"]
+}

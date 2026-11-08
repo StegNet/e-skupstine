@@ -1,0 +1,18 @@
+# Local development helpers: `bun run services` starts these, then `bun dev`.
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # Catches all outgoing mail: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
+
+  # Stand-in for Certilia/Okta: log in as anyone and type the claims, e.g. {"oib":"12345678903","name":"Ana Horvat"}.
+  mock-oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+    ports:
+      - "127.0.0.1:8080:8080"

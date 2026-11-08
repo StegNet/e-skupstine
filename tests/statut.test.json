@@ -1,0 +1,10 @@
+{
+  "name": "Udruga za testiranje",
+  "noticeDays": 8,
+  "videoRequired": true,
+  "quorumPercent": 50,
+  "majority": { "base": "present", "fraction": "half" },
+  "secretBallotByDefault": false,
+  "memberCategories": { "redovni": true, "podupirući": false },
+  "minutesSigners": ["chair", "recorder"]
+}

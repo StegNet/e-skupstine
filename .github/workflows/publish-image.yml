@@ -1,0 +1,83 @@
+name: Publish Docker image and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to build (e.g. v1.2.3)'
+        required: true
+        type: string
+
+jobs:
+  publish:
+    # bun install and a Turbopack production build of the server app use every core
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve version and image tags
+        id: meta
+        run: |
+          # On manual dispatch the ref is a branch, so take the tag from input.
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image_repo=ghcr.io/${repo_lc}" >> "$GITHUB_OUTPUT"
+
+      - name: Log into GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v2
+        with:
+          # Stable key so the layer-cache sticky disk is shared across every run.
+          # Must NOT vary per tag/sha, or each build gets a fresh (cold) disk.
+          cache-key: ${{ github.repository }}
+
+      - name: Build and push Docker image to GHCR
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          target: runtime
+          push: true
+          provenance: false
+          # Layer cache lives on the Blacksmith sticky disk, keyed by the
+          # stable cache-key in Setup Blacksmith Builder above. No explicit
+          # cache-from/cache-to needed — the builder wires it up automatically.
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT_SHA=${{ github.sha }}
+            NEXT_PUBLIC_SENTRY_DSN=${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+            SENTRY_ORG=${{ vars.SENTRY_ORG }}
+            SENTRY_PROJECT=${{ vars.SENTRY_PROJECT }}
+          secrets: |
+            SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
+          tags: |
+            ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image_repo }}:latest
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Release ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

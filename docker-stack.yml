@@ -1,0 +1,109 @@
+# Docker Swarm stack for e-Skupština. Set-up and the commands are in README "Docker Swarm"; in short:
+#   docker node update --label-add eskupstina.db=true <node that keeps the database>
+#   create the five secrets below (docker secret create …)
+#   BETTER_AUTH_URL=https://glasanje.example.org IMAGE=ghcr.io/<owner>/<repo>:latest \
+#     docker stack deploy --with-registry-auth -c docker-stack.yml eskupstina
+# Values in ${…} come from the shell that runs `docker stack deploy`.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: eskupstina
+      POSTGRES_DB: eskupstina
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eskupstina"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      replicas: 1
+      placement:
+        # The data is in a local volume, so the database always runs on the same, labelled node.
+        constraints:
+          - node.labels.eskupstina.db == true
+      restart_policy:
+        condition: any
+
+  app:
+    image: ${IMAGE:-ghcr.io/your-org/e-skupstina:latest}
+    environment:
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?set BETTER_AUTH_URL to the public https URL}
+      MAIL_FROM: ${MAIL_FROM:-e-Skupština <noreply@example.org>}
+      CERTILIA_DISCOVERY_URL: ${CERTILIA_DISCOVERY_URL:-}
+      CERTILIA_CLIENT_ID: ${CERTILIA_CLIENT_ID:-}
+      CERTILIA_SCOPES: ${CERTILIA_SCOPES:-openid profile email}
+      # Secrets arrive as files; scripts/docker-entrypoint.sh reads each NAME_FILE into NAME.
+      DATABASE_URL_FILE: /run/secrets/database_url
+      BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
+      SMTP_URL_FILE: /run/secrets/smtp_url
+      CERTILIA_CLIENT_SECRET_FILE: /run/secrets/certilia_client_secret
+      # Okta instead of (or besides) Certilia: add OKTA_ISSUER, OKTA_CLIENT_ID, OKTA_ADMIN_GROUP here and an
+      # okta_client_secret secret with OKTA_CLIENT_SECRET_FILE.
+    secrets:
+      - database_url
+      - better_auth_secret
+      - smtp_url
+      - certilia_client_secret
+    configs:
+      # The udruga's statute rules, mounted over the image's default statut.json.
+      - source: statut
+        target: /usr/src/app/statut.json
+    networks:
+      - backend
+    ports:
+      # Put this behind your HTTPS reverse proxy, or drop the port and use the Traefik labels below.
+      - "3000:3000"
+    deploy:
+      # One replica: migrations run at start, and two instances starting together would race.
+      replicas: 1
+      update_config:
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        order: start-first
+      restart_policy:
+        condition: any
+      # labels:
+      #   - traefik.enable=true
+      #   - traefik.http.routers.eskupstina.rule=Host(`glasanje.example.org`)
+      #   - traefik.http.routers.eskupstina.entrypoints=websecure
+      #   - traefik.http.routers.eskupstina.tls.certresolver=letsencrypt
+      #   - traefik.http.services.eskupstina.loadbalancer.server.port=3000
+
+networks:
+  backend:
+    driver: overlay
+
+volumes:
+  pgdata:
+
+secrets:
+  postgres_password:
+    external: true
+    name: eskupstina_postgres_password
+  database_url:
+    external: true
+    name: eskupstina_database_url
+  better_auth_secret:
+    external: true
+    name: eskupstina_better_auth_secret
+  smtp_url:
+    external: true
+    name: eskupstina_smtp_url
+  certilia_client_secret:
+    external: true
+    name: eskupstina_certilia_client_secret
+
+configs:
+  statut:
+    # Swarm configs can't change in place: after editing statut.json, deploy with STATUT_REV raised by one.
+    name: eskupstina_statut_${STATUT_REV:-1}
+    file: ./statut.json

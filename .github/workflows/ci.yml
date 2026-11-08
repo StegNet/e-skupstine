@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.4.4"
+  NODE_VERSION: "24"
+
+# tsc, eslint and the test runs are mostly single-threaded and small, so 2 vCPU each.
+# Images are built and published by publish-image.yml on version tags.
+jobs:
+  check:
+    name: Lint and types
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bunx next typegen
+      - run: bunx tsc --noEmit
+      - run: bun run lint
+
+  unit:
+    name: Unit tests
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun test src
+
+  flow:
+    name: End-to-end sessions (Postgres)
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: eskupstina
+          POSTGRES_PASSWORD: eskupstina
+          POSTGRES_DB: eskupstina_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eskupstina"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # Test-only values; mail is printed instead of sent because SMTP_URL is unset.
+      BETTER_AUTH_URL: http://localhost:3000
+      BETTER_AUTH_SECRET: ci-only-secret-for-the-flow-tests-0001
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run test:flow
