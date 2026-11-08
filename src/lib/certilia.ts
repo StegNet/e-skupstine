@@ -12,8 +12,8 @@ const idTokenClaims = (idToken: string | null | undefined): Record<string, unkno
   idToken ? JSON.parse(Buffer.from(idToken.split(".")[1] ?? "", "base64url").toString() || "{}") : {};
 
 /** The ID token's claims, plus the userinfo endpoint's when the ID token has none of `wanted`.
- * The ID token comes first because Certilia's server refuses request headers over ~8 KB: an access token carrying
- * the photo is larger than that, so userinfo answers 400 to it (and accepts the token nowhere else). */
+ * The ID token comes first: it is already verified and in hand, and Certilia's userinfo has answered 400 to real
+ * access tokens (cause not known yet; the failure log carries Certilia's error text). */
 export async function certiliaClaims(tokens: Tokens, wanted: string[]): Promise<Record<string, unknown>> {
   const claims = idTokenClaims(tokens.idToken);
   const discoveryUrl = process.env.CERTILIA_DISCOVERY_URL;
@@ -27,7 +27,9 @@ export async function certiliaClaims(tokens: Tokens, wanted: string[]): Promise<
   }
   const res = await fetch(endpoint, { headers: { Authorization: `Bearer ${tokens.accessToken}` }, signal: TIMEOUT() });
   if (!res.ok) {
-    logger.warn("Certilia userinfo request failed", { status: res.status, tokenBytes: tokens.accessToken.length });
+    // Certilia's error text (e.g. {"error":"invalid_request","error_description":"…"}); it never echoes the token.
+    const detail = (await res.text()).slice(0, 300).replace(/\s+/g, " ");
+    logger.warn("Certilia userinfo request failed", { status: res.status, tokenBytes: tokens.accessToken.length, detail });
     return claims;
   }
   const info = (await res.json()) as Record<string, unknown>;

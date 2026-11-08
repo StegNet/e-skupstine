@@ -24,11 +24,8 @@ const providers: GenericOAuthConfig[] = [];
  * shortcut: claim name not yet seen in a real login; if login fails with this error, log the profile and check. */
 function certiliaOib(profile: Record<string, unknown>) {
   const oib = String(profile.pin ?? "");
-  if (!isValidOib(oib)) {
-    // Claim names only, never values: tells us which field the OIB is in if Certilia renames it.
-    logger.warn("Certilia profile has no valid OIB", { claims: Object.keys(profile).sort().join(","), hasPin: "pin" in profile });
-    throw new APIError("UNAUTHORIZED", { message: "Certilia profile has no valid OIB" });
-  }
+  // getUserInfo already refused such profiles; this guards the account subject and the user mapping.
+  if (!isValidOib(oib)) throw new APIError("UNAUTHORIZED", { message: "Certilia profile has no valid OIB" });
   return oib;
 }
 
@@ -46,8 +43,17 @@ if (certiliaDiscovery) {
     // (Better Auth would otherwise skip userinfo whenever the ID token has an email). `sub` is still checked against it.
     getUserInfo: async (tokens) => {
       const info = await certiliaClaims(tokens, ["pin"]);
-      logger.debug("Certilia claims", { claims: Object.keys(info).sort().join(",") });
-      if (!info.sub) return null;
+      if (!info.sub || !isValidOib(String(info.pin ?? ""))) {
+        // Claim names only, never values: tells us which field the OIB is in if Certilia renames it.
+        const oibIn = Object.keys(info).filter((k) => isValidOib(String(info[k]))).join(",");
+        logger.warn("Certilia profile has no valid OIB", { claims: Object.keys(info).sort().join(","), hasPin: "pin" in info, oibIn });
+        // TEMPORARY, remove once Certilia sign-in works: the claim values, written straight to stdout so they never
+        // reach Sentry, the photo as its length only. Only failed sign-ins get here.
+        process.stdout.write(
+          `certilia claims ${JSON.stringify(info, (k, v) => (k === "thumbnail" && typeof v === "string" ? `<${v.length} chars>` : v))}\n`,
+        );
+        return null; // Better Auth then sends the member back to the sign-in page with an error, not a JSON reply.
+      }
       return { ...info, emailVerified: info.email_verified === true || info.email_verified === "true" };
     },
     // The OIB becomes the account's subject (account.account_id). Better Auth writes it from the verified

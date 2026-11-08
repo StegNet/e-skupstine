@@ -32,8 +32,8 @@ test("adds userinfo claims when the ID token lacks the wanted claim", async () =
   expect(claims).toEqual({ sub: "s1", name: "Ana", pin: "12345678903" });
 });
 
-test("keeps the ID token claims when userinfo refuses an oversized token", async () => {
+test("keeps the ID token claims when userinfo fails", async () => {
   certilia(new Response("<html>400 Bad Request</html>", { status: 400 }));
-  const claims = await certiliaClaims({ accessToken: "a".repeat(9000), idToken: jwt({ sub: "s1" }) }, ["pin"]);
+  const claims = await certiliaClaims({ accessToken: "t", idToken: jwt({ sub: "s1" }) }, ["pin"]);
   expect(claims).toEqual({ sub: "s1" });
 });
