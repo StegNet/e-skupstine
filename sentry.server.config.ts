@@ -41,6 +41,11 @@ Sentry.init({
     cookies: false,
     urlQueryParams: false,
   },
+  // Drizzle appends a failed query's parameters (OIBs, encrypted ballots) to its error message.
+  beforeSend(event) {
+    for (const ex of event.exception?.values ?? []) ex.value = ex.value?.split("\nparams:")[0];
+    return event;
+  },
 });
 
 await configure({

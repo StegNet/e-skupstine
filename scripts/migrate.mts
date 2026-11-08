@@ -8,7 +8,7 @@ const sql = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
 
 // Swarm has no depends_on: the app can start before Postgres accepts connections, so wait up to 3 minutes.
 // Only for "not up yet" errors; a wrong password or database name fails right away below, with its real message.
-const NOT_UP_YET = ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ETIMEDOUT", "57P03"];
+const NOT_UP_YET = ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ETIMEDOUT", "CONNECT_TIMEOUT", "57P03"];
 for (let attempt = 1; attempt <= 90; attempt++) {
   try {
     await sql`select 1`;
